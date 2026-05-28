@@ -42,25 +42,42 @@ async def reset(session_id: str):
     return {"session_id": session_id, "cleared": cleared}
 
 
-async def _run(cmd: list[str], timeout: float = 8.0) -> dict:
+async def _run(cmd: list[str], timeout: float = 8.0, env: dict | None = None) -> dict:
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return {
+                "ok": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "stdout": stdout.decode(errors="replace")[-1500:],
+                "stderr": stderr.decode(errors="replace")[-1500:],
+            }
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return {"ok": False, "error": f"timeout after {timeout}s"}
-        return {
-            "ok": proc.returncode == 0,
-            "returncode": proc.returncode,
-            "stdout": stdout.decode(errors="replace")[:500],
-            "stderr": stderr.decode(errors="replace")[:500],
-        }
+            # Capture whatever was buffered before we kill the child.
+            partial_stdout = b""
+            partial_stderr = b""
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                partial_stdout, partial_stderr = stdout, stderr
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "error": f"timeout after {timeout}s",
+                "partial_stdout": partial_stdout.decode(errors="replace")[-1500:],
+                "partial_stderr": partial_stderr.decode(errors="replace")[-1500:],
+            }
     except FileNotFoundError as e:
         return {"ok": False, "error": f"binary not found: {e}"}
     except Exception as e:
@@ -163,14 +180,29 @@ async def diag(cli_test: int = 0):
     )
     results["https_get_anthropic"] = await _http_get("https://api.anthropic.com/", timeout=5.0)
 
+    results["pod_env"] = {
+        "NODE_OPTIONS": os.environ.get("NODE_OPTIONS"),
+        "HTTPS_PROXY": os.environ.get("HTTPS_PROXY"),
+        "HTTP_PROXY": os.environ.get("HTTP_PROXY"),
+        "NO_PROXY": os.environ.get("NO_PROXY"),
+    }
+
     if claude_path:
         results["claude_version"] = await _run([claude_path, "--version"], timeout=5.0)
         if cli_test:
-            results["claude_print_hello"] = await _run(
+            base_env = dict(os.environ)
+            forced_env = {
+                **base_env,
+                "NODE_OPTIONS": "--dns-result-order=ipv4first",
+                "DEBUG": "1",
+                "NODE_DEBUG": "net,dns,http",
+            }
+            results["claude_print_hello_ipv4first"] = await _run(
                 [claude_path, "-p", "say hi in one word", "--output-format", "json"],
-                timeout=25.0,
+                timeout=22.0,
+                env=forced_env,
             )
         else:
-            results["claude_print_hello"] = "skipped (pass ?cli_test=1 to run; may exceed 30s gateway timeout)"
+            results["claude_print_hello_ipv4first"] = "skipped (pass ?cli_test=1 to run; may exceed 30s gateway timeout)"
 
     return JSONResponse(content=results)
