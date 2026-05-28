@@ -78,7 +78,18 @@ def _find_bundled_claude() -> str | None:
     return shutil.which("claude")
 
 
-def _resolve(host: str, family: int) -> dict:
+async def _run_blocking(fn, *, timeout: float, **kwargs):
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: fn(**kwargs)),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": f"timeout after {timeout}s"}
+
+
+def _resolve_sync(host: str, family: int) -> dict:
     try:
         infos = socket.getaddrinfo(host, 443, family, socket.SOCK_STREAM)
         return {"ok": True, "addrs": sorted({ai[4][0] for ai in infos})}
@@ -86,7 +97,7 @@ def _resolve(host: str, family: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def _tcp_connect(host: str, port: int, family: int, timeout: float = 5.0) -> dict:
+def _tcp_connect_sync(host: str, port: int, family: int, timeout: float) -> dict:
     try:
         infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except socket.gaierror as e:
@@ -134,12 +145,23 @@ async def diag(cli_test: int = 0):
         },
         "claude_binary": {"path": claude_path, "exists": bool(claude_path)},
         "node_binary": {"path": node_path, "exists": bool(node_path)},
-        "dns_a_record":    _resolve("api.anthropic.com", socket.AF_INET),
-        "dns_aaaa_record": _resolve("api.anthropic.com", socket.AF_INET6),
-        "tcp_connect_ipv4": _tcp_connect("api.anthropic.com", 443, socket.AF_INET, timeout=3.0),
-        "tcp_connect_ipv6": _tcp_connect("api.anthropic.com", 443, socket.AF_INET6, timeout=3.0),
-        "https_get_anthropic": await _http_get("https://api.anthropic.com/", timeout=5.0),
     }
+
+    results["dns_a_record"] = await _run_blocking(
+        _resolve_sync, timeout=4.0, host="api.anthropic.com", family=socket.AF_INET
+    )
+    results["dns_aaaa_record"] = await _run_blocking(
+        _resolve_sync, timeout=4.0, host="api.anthropic.com", family=socket.AF_INET6
+    )
+    results["tcp_connect_ipv4"] = await _run_blocking(
+        _tcp_connect_sync, timeout=4.0,
+        host="api.anthropic.com", port=443, family=socket.AF_INET, timeout=3.0,
+    )
+    results["tcp_connect_ipv6"] = await _run_blocking(
+        _tcp_connect_sync, timeout=4.0,
+        host="api.anthropic.com", port=443, family=socket.AF_INET6, timeout=3.0,
+    )
+    results["https_get_anthropic"] = await _http_get("https://api.anthropic.com/", timeout=5.0)
 
     if claude_path:
         results["claude_version"] = await _run([claude_path, "--version"], timeout=5.0)
