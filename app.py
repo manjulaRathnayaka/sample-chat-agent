@@ -47,6 +47,7 @@ async def _run(cmd: list[str], timeout: float = 8.0, env: dict | None = None) ->
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -185,24 +186,39 @@ async def diag(cli_test: int = 0):
         "HTTPS_PROXY": os.environ.get("HTTPS_PROXY"),
         "HTTP_PROXY": os.environ.get("HTTP_PROXY"),
         "NO_PROXY": os.environ.get("NO_PROXY"),
+        "HOME": os.environ.get("HOME"),
+        "USER": os.environ.get("USER"),
+        "PWD": os.environ.get("PWD"),
     }
+
+    home = os.environ.get("HOME") or "/tmp"
+    try:
+        Path(home).mkdir(parents=True, exist_ok=True)
+        test_path = Path(home) / ".sample-chat-agent-writetest"
+        test_path.write_text("x")
+        test_path.unlink()
+        results["home_writable"] = {"ok": True, "home": home}
+    except Exception as e:
+        results["home_writable"] = {"ok": False, "home": home, "error": f"{type(e).__name__}: {e}"}
 
     if claude_path:
         results["claude_version"] = await _run([claude_path, "--version"], timeout=5.0)
+        results["claude_help"] = await _run([claude_path, "--help"], timeout=5.0)
         if cli_test:
             base_env = dict(os.environ)
             forced_env = {
                 **base_env,
                 "NODE_OPTIONS": "--dns-result-order=ipv4first",
-                "DEBUG": "1",
-                "NODE_DEBUG": "net,dns,http",
+                "DEBUG": "*",
+                "ANTHROPIC_LOG": "debug",
             }
-            results["claude_print_hello_ipv4first"] = await _run(
-                [claude_path, "-p", "say hi in one word", "--output-format", "json"],
+            results["claude_print_hello_stream"] = await _run(
+                [claude_path, "-p", "say hi in one word",
+                 "--output-format", "stream-json", "--verbose", "--debug"],
                 timeout=22.0,
                 env=forced_env,
             )
         else:
-            results["claude_print_hello_ipv4first"] = "skipped (pass ?cli_test=1 to run; may exceed 30s gateway timeout)"
+            results["claude_print_hello_stream"] = "skipped (pass ?cli_test=1 to run)"
 
     return JSONResponse(content=results)
