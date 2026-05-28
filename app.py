@@ -97,7 +97,7 @@ def _resolve_sync(host: str, family: int) -> dict:
         return {"ok": False, "error": str(e)}
 
 
-def _tcp_connect_sync(host: str, port: int, family: int, timeout: float) -> dict:
+def _tcp_connect_sync(host: str, port: int, family: int, conn_timeout: float) -> dict:
     try:
         infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
     except socket.gaierror as e:
@@ -106,7 +106,7 @@ def _tcp_connect_sync(host: str, port: int, family: int, timeout: float) -> dict
         return {"ok": False, "error": "no addresses"}
     addr = infos[0][4]
     s = socket.socket(family, socket.SOCK_STREAM)
-    s.settimeout(timeout)
+    s.settimeout(conn_timeout)
     try:
         s.connect(addr)
         return {"ok": True, "connected_to": addr[0]}
@@ -155,11 +155,11 @@ async def diag(cli_test: int = 0):
     )
     results["tcp_connect_ipv4"] = await _run_blocking(
         _tcp_connect_sync, timeout=4.0,
-        host="api.anthropic.com", port=443, family=socket.AF_INET, timeout=3.0,
+        host="api.anthropic.com", port=443, family=socket.AF_INET, conn_timeout=3.0,
     )
     results["tcp_connect_ipv6"] = await _run_blocking(
         _tcp_connect_sync, timeout=4.0,
-        host="api.anthropic.com", port=443, family=socket.AF_INET6, timeout=3.0,
+        host="api.anthropic.com", port=443, family=socket.AF_INET6, conn_timeout=3.0,
     )
     results["https_get_anthropic"] = await _http_get("https://api.anthropic.com/", timeout=5.0)
 
