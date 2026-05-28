@@ -1,5 +1,16 @@
-import asyncio
 import os
+
+# Force writable HOME / CLAUDE_CONFIG_DIR before the SDK launches the CLI.
+# Buildpack HOME is often read-only; without this the bundled `claude` binary
+# can stall on its config-init.
+_CLAUDE_HOME = "/tmp/claude-home"
+os.makedirs(_CLAUDE_HOME, exist_ok=True)
+_CLAUDE_CFG = os.path.join(_CLAUDE_HOME, ".claude")
+os.makedirs(_CLAUDE_CFG, exist_ok=True)
+os.environ.setdefault("CLAUDE_CONFIG_DIR", _CLAUDE_CFG)
+os.environ["HOME"] = _CLAUDE_HOME  # override unconditionally; buildpack HOME may be read-only
+
+import asyncio
 import shutil
 import socket
 import ssl
@@ -189,6 +200,7 @@ async def diag(cli_test: int = 0):
         "HOME": os.environ.get("HOME"),
         "USER": os.environ.get("USER"),
         "PWD": os.environ.get("PWD"),
+        "CLAUDE_CONFIG_DIR": os.environ.get("CLAUDE_CONFIG_DIR"),
     }
 
     home = os.environ.get("HOME") or "/tmp"
