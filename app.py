@@ -161,17 +161,22 @@ async def _http_get(url: str, timeout: float = 5.0) -> dict:
 
 @app.get("/diag")
 async def diag(cli_test: int = 0):
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    def _summarize(varname: str) -> dict:
+        v = os.environ.get(varname, "")
+        return {
+            "present": bool(v),
+            "length": len(v),
+            "prefix": v[:14] if v else None,
+            "has_trailing_whitespace": v != v.rstrip() if v else False,
+        }
+
     claude_path = _find_bundled_claude()
     node_path = shutil.which("node")
 
     results: dict = {
-        "anthropic_api_key": {
-            "present": bool(key),
-            "length": len(key),
-            "prefix": key[:12] if key else None,
-            "has_trailing_whitespace": key != key.rstrip() if key else False,
-        },
+        "anthropic_api_key": _summarize("ANTHROPIC_API_KEY"),
+        "claude_code_oauth_token": _summarize("CLAUDE_CODE_OAUTH_TOKEN"),
+        "anthropic_auth_token": _summarize("ANTHROPIC_AUTH_TOKEN"),
         "claude_binary": {"path": claude_path, "exists": bool(claude_path)},
         "node_binary": {"path": node_path, "exists": bool(node_path)},
     }
