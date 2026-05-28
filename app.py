@@ -1,6 +1,9 @@
 import asyncio
 import os
 import shutil
+import socket
+import ssl
+import urllib.request
 from pathlib import Path
 
 import dotenv
@@ -75,6 +78,47 @@ def _find_bundled_claude() -> str | None:
     return shutil.which("claude")
 
 
+def _resolve(host: str, family: int) -> dict:
+    try:
+        infos = socket.getaddrinfo(host, 443, family, socket.SOCK_STREAM)
+        return {"ok": True, "addrs": sorted({ai[4][0] for ai in infos})}
+    except socket.gaierror as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _tcp_connect(host: str, port: int, family: int, timeout: float = 5.0) -> dict:
+    try:
+        infos = socket.getaddrinfo(host, port, family, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        return {"ok": False, "error": f"resolve failed: {e}"}
+    if not infos:
+        return {"ok": False, "error": "no addresses"}
+    addr = infos[0][4]
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(addr)
+        return {"ok": True, "connected_to": addr[0]}
+    except (socket.timeout, OSError) as e:
+        return {"ok": False, "connect_addr": addr[0], "error": f"{type(e).__name__}: {e}"}
+    finally:
+        s.close()
+
+
+async def _http_get(url: str, timeout: float = 5.0) -> dict:
+    def _do() -> dict:
+        try:
+            req = urllib.request.Request(url, method="GET")
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return {"ok": True, "status": resp.status}
+        except urllib.error.HTTPError as e:
+            return {"ok": True, "status": e.code}  # got a response, that's what matters
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return await asyncio.get_running_loop().run_in_executor(None, _do)
+
+
 @app.get("/diag")
 async def diag():
     key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -90,25 +134,18 @@ async def diag():
         },
         "claude_binary": {"path": claude_path, "exists": bool(claude_path)},
         "node_binary": {"path": node_path, "exists": bool(node_path)},
+        "dns_a_record":    _resolve("api.anthropic.com", socket.AF_INET),
+        "dns_aaaa_record": _resolve("api.anthropic.com", socket.AF_INET6),
+        "tcp_connect_ipv4": _tcp_connect("api.anthropic.com", 443, socket.AF_INET),
+        "tcp_connect_ipv6": _tcp_connect("api.anthropic.com", 443, socket.AF_INET6),
+        "https_get_anthropic": await _http_get("https://api.anthropic.com/"),
     }
 
-    # Egress check: can we reach api.anthropic.com?
-    results["egress_anthropic_api"] = await _run(
-        ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} time=%{time_total}",
-         "--max-time", "5", "https://api.anthropic.com/v1/messages"]
-    )
-
-    # DNS check
-    results["dns_anthropic_api"] = await _run(
-        ["getent", "hosts", "api.anthropic.com"], timeout=5.0
-    )
-
-    # Node version
-    if node_path:
-        results["node_version"] = await _run([node_path, "--version"])
-
-    # Claude CLI version
     if claude_path:
         results["claude_version"] = await _run([claude_path, "--version"])
+        results["claude_print_hello"] = await _run(
+            [claude_path, "-p", "say hi in one word", "--output-format", "json"],
+            timeout=45.0,
+        )
 
     return JSONResponse(content=results)
