@@ -1,0 +1,113 @@
+openapi: 3.0.3
+info:
+  title: Claude Agent Service
+  description: |
+    A FastAPI service that exposes a Claude-powered chat agent backed by the
+    Claude Agent SDK. The agent's behavior is fully determined by the system
+    prompt supplied via the `AGENT_SYSTEM_PROMPT` environment variable, so the
+    same code can be deployed as a security probe, a support bot, a DevOps
+    helper, etc.
+
+    Send a natural-language instruction to /chat and the agent will use its
+    available tools (Bash, Read, Grep, Glob, WebFetch) to respond.
+  version: 1.0.0
+  contact:
+    name: API Support
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+paths:
+  /chat:
+    post:
+      summary: Send a message to the agent
+      description: |
+        The agent maintains conversation state per `session_id`, so follow-up
+        messages on the same `session_id` see prior turns.
+      operationId: chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+            examples:
+              simple:
+                summary: A simple instruction
+                value:
+                  session_id: "sess-001"
+                  message: "What network interfaces and routes do you see on this machine?"
+              followUp:
+                summary: A follow-up on the same session
+                value:
+                  session_id: "sess-001"
+                  message: "Now look at /etc/resolv.conf and tell me about the DNS configuration."
+      responses:
+        "200":
+          description: Agent reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "400":
+          description: Missing session_id or message
+        "500":
+          description: Internal error
+  /sessions/{session_id}/reset:
+    post:
+      summary: Drop the agent's state for a session
+      operationId: resetSession
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Whether an existing session was cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                  cleared:
+                    type: boolean
+  /healthz:
+    get:
+      summary: Liveness check
+      operationId: healthz
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+components:
+  schemas:
+    ChatRequest:
+      type: object
+      required:
+        - session_id
+        - message
+      properties:
+        session_id:
+          type: string
+          description: Unique identifier for the conversation session
+        message:
+          type: string
+          description: Natural-language instruction for the agent
+    ChatResponse:
+      type: object
+      required:
+        - response
+      properties:
+        response:
+          type: string
+          description: Agent's findings or follow-up question

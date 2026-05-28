@@ -1,0 +1,4 @@
+claude-agent-sdk>=0.2
+fastapi
+uvicorn[standard]
+python-dotenv
