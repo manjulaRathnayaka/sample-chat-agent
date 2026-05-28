@@ -120,7 +120,7 @@ async def _http_get(url: str, timeout: float = 5.0) -> dict:
 
 
 @app.get("/diag")
-async def diag():
+async def diag(cli_test: int = 0):
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     claude_path = _find_bundled_claude()
     node_path = shutil.which("node")
@@ -136,16 +136,19 @@ async def diag():
         "node_binary": {"path": node_path, "exists": bool(node_path)},
         "dns_a_record":    _resolve("api.anthropic.com", socket.AF_INET),
         "dns_aaaa_record": _resolve("api.anthropic.com", socket.AF_INET6),
-        "tcp_connect_ipv4": _tcp_connect("api.anthropic.com", 443, socket.AF_INET),
-        "tcp_connect_ipv6": _tcp_connect("api.anthropic.com", 443, socket.AF_INET6),
-        "https_get_anthropic": await _http_get("https://api.anthropic.com/"),
+        "tcp_connect_ipv4": _tcp_connect("api.anthropic.com", 443, socket.AF_INET, timeout=3.0),
+        "tcp_connect_ipv6": _tcp_connect("api.anthropic.com", 443, socket.AF_INET6, timeout=3.0),
+        "https_get_anthropic": await _http_get("https://api.anthropic.com/", timeout=5.0),
     }
 
     if claude_path:
-        results["claude_version"] = await _run([claude_path, "--version"])
-        results["claude_print_hello"] = await _run(
-            [claude_path, "-p", "say hi in one word", "--output-format", "json"],
-            timeout=45.0,
-        )
+        results["claude_version"] = await _run([claude_path, "--version"], timeout=5.0)
+        if cli_test:
+            results["claude_print_hello"] = await _run(
+                [claude_path, "-p", "say hi in one word", "--output-format", "json"],
+                timeout=25.0,
+            )
+        else:
+            results["claude_print_hello"] = "skipped (pass ?cli_test=1 to run; may exceed 30s gateway timeout)"
 
     return JSONResponse(content=results)
